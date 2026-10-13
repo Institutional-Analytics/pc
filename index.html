@@ -249,6 +249,24 @@ footer { margin-top: 36px; color: var(--muted); font-size: 12px; border-top: 1px
   </section>
 
   <section>
+    <h2>Progress against potential, day by day</h2>
+    <p class="h2sub" id="potLogSub"></p>
+    <div class="card">
+      <div class="card-head">
+        <div class="card-title" id="potLogTitle">Cumulative share of potential</div>
+        <div class="seg" id="segPotV">
+          <button data-v="v1" aria-pressed="true">V1</button>
+          <button data-v="v2" aria-pressed="false">V2</button>
+          <button data-v="v3" aria-pressed="false">V3</button>
+          <button data-v="v4" aria-pressed="false">V4</button>
+          <button data-v="total" aria-pressed="false">Total</button>
+        </div>
+      </div>
+      <div class="tbl-wrap"><table id="tblPotDays"></table></div>
+    </div>
+  </section>
+
+  <section>
     <h2>Intraday pace</h2>
     <p class="h2sub">Running totals within the selected day at the 1 PM, 7 PM and 11 PM checkpoints, same semester day compared.</p>
     <div class="grid wide-left">
@@ -355,16 +373,16 @@ function startApp(DATA) {
   const SEMS = ["previous", "current"];
 
   // ---------- state ----------
-  const S = { group: "campus", entity: "All Campuses", cur: "USD", day: 1, range: 14, metric: "t", intra: "amt", mix: "cum", measure: "amt" };
+  const S = { group: "campus", entity: "All Campuses", cur: "USD", day: 1, range: 14, metric: "t", intra: "amt", mix: "cum", measure: "amt", potV: "v1" };
   try {
     const saved = JSON.parse(localStorage.getItem("fallcmp-prefs") || "{}");
     if (saved.theme) document.documentElement.setAttribute("data-theme", saved.theme);
-    ["range", "metric", "measure"].forEach((k) => { if (saved[k] != null) S[k] = saved[k]; });
+    ["range", "metric", "measure", "potV"].forEach((k) => { if (saved[k] != null) S[k] = saved[k]; });
   } catch (e) {}
   const savePrefs = () => {
     try {
       localStorage.setItem("fallcmp-prefs", JSON.stringify({
-        theme: document.documentElement.getAttribute("data-theme"), range: S.range, metric: S.metric, measure: S.measure }));
+        theme: document.documentElement.getAttribute("data-theme"), range: S.range, metric: S.metric, measure: S.measure, potV: S.potV }));
     } catch (e) {}
   };
 
@@ -508,6 +526,7 @@ function startApp(DATA) {
   bindSeg("#segIntra", "intra");
   bindSeg("#segMix", "mix");
   bindSeg("#segMeasure", "measure");
+  bindSeg("#segPotV", "potV");
   $("#selEntity").addEventListener("change", (e) => { S.entity = e.target.value; render(); });
   $("#selDay").addEventListener("change", (e) => { S.day = +e.target.value; render(); });
   $("#dayPrev").addEventListener("click", () => { if (S.day > 1) { S.day--; render(); } });
@@ -845,6 +864,44 @@ function startApp(DATA) {
       tr.addEventListener("click", go);
       tr.addEventListener("keydown", (ev) => { if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); go(); } });
     });
+
+    // ---- Progress against potential, day by day
+    const pk = S.potV, pkLbl = pk === "total" ? "Total (V1–V4 + Others)" : pk.toUpperCase();
+    const POT_KEYS = ["v1", "v2", "v3", "v4", "oth"];
+    const pvDay = (sem, d) => (pk === "total" ? (val(sem, d, K("v1")) == null ? null : POT_KEYS.reduce((a, k) => a + (val(sem, d, K(k)) || 0), 0)) : val(sem, d, K(pk)));
+    const pvCum = (sem, d) => (d > MAXDAY[sem] ? null : pk === "total" ? potCollected(sem, d) : cum(sem, d, K(pk)));
+    $("#potLogTitle").textContent = `${pkLbl} · cumulative share of potential`;
+    if (potC && potP) {
+      const capC = potC[pk], capP = potP[pk];
+      $("#potLogSub").textContent = `${withNote(S.entity)}, ${cur}. Running total of ${pkLbl} payments as a share of that voucher's full-semester potential ` +
+        `(${LBL.current} ${money(capC, { compact: true })}, ${LBL.previous} ${money(capP, { compact: true })}), compared on the same semester day. ` +
+        `Payments toward other semesters are excluded. Click a row to select that day.`;
+      let ql = `<thead><tr><th rowspan="2">Day</th><th class="grp p sepl" colspan="4">${esc(LBL.previous)}</th>` +
+        `<th class="grp c sepl" colspan="4">${esc(LBL.current)}</th><th class="grp sepl" rowspan="2">Δ pts</th></tr><tr>` +
+        `<th class="sepl">Date</th><th>Paid</th><th>Cumulative</th><th>% of potential</th>` +
+        `<th class="sepl">Date</th><th>Paid</th><th>Cumulative</th><th>% of potential</th></tr></thead><tbody>`;
+      days.forEach((d) => {
+        const has = d <= MAXDAY.current;
+        const pc = pvCum("previous", d), cc = has ? pvCum("current", d) : null;
+        const rp = pc != null && capP ? pc / capP : null, rc = cc != null && capC ? cc / capC : null;
+        const dp = rc != null && rp != null ? (rc - rp) * 100 : null;
+        const cls = dp == null || Math.abs(dp) < 0.05 ? "flat" : dp > 0 ? "up" : "down";
+        ql += `<tr class="${d === n ? "sel" : ""}${has ? " click" : ""}" ${has ? `tabindex="0" data-d="${d}"` : ""}>` +
+          `<td class="name">Day ${d} <span class="dim">${wk(d)}</span></td>` +
+          `<td class="sepl dim">${fDate(dateOf("previous", d))}</td><td>${money(pvDay("previous", d))}</td><td>${money(pc)}</td><td><b>${pa(rp)}</b></td>` +
+          `<td class="sepl dim">${fDate(dateOf("current", d))}</td><td>${has ? money(pvDay("current", d)) : "—"}</td><td>${money(cc)}</td><td><b>${pa(rc)}</b></td>` +
+          `<td class="sepl"><span class="delta ${cls}">${dp == null ? "—" : cls === "flat" ? "● 0.0" : (dp > 0 ? "▲ +" : "▼ ") + dp.toFixed(1)}</span></td></tr>`;
+      });
+      $("#tblPotDays").innerHTML = ql + "</tbody>";
+      $("#tblPotDays").querySelectorAll("tr[data-d]").forEach((tr) => {
+        const go = () => { S.day = +tr.dataset.d; render(); };
+        tr.addEventListener("click", go);
+        tr.addEventListener("keydown", (ev) => { if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); go(); } });
+      });
+    } else {
+      $("#tblPotDays").innerHTML = "";
+      $("#potLogSub").textContent = `Potential isn't published for ${S.entity}${potC || potP ? " in both semesters" : ""}. Pick All Schools or switch to Campuses to see the daily progress against potential.`;
+    }
 
     // ---- Totals table (as published in the exports)
     const eP = ent("previous");
